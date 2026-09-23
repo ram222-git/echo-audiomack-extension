@@ -6,6 +6,7 @@ import dev.brahmkshatriya.echo.common.models.Artist
 import dev.brahmkshatriya.echo.common.models.EchoMediaItem
 import dev.brahmkshatriya.echo.common.models.ImageHolder.Companion.toImageHolder
 import dev.brahmkshatriya.echo.common.models.Playlist
+import dev.brahmkshatriya.echo.common.models.QuickSearchItem
 import dev.brahmkshatriya.echo.common.models.Streamable
 import dev.brahmkshatriya.echo.common.models.Track
 import kotlinx.serialization.json.Json
@@ -239,6 +240,69 @@ class AudiomackApi(
                 else -> parseTrack(it)
             }
         }
+    }
+
+    suspend fun searchPlaylists(query: String, page: Int = 1): List<Playlist> {
+        val params = mutableMapOf("q" to query, "show" to "playlists")
+        if (page > 1) params["page"] = page.toString()
+        val json = getJson("search", params) ?: return emptyList()
+        val results = json["results"]?.jsonArray ?: return emptyList()
+        return results.mapNotNull { it as? JsonObject }.map { parsePlaylist(it) }
+    }
+
+    suspend fun searchRsc(query: String, show: String = "music"): List<EchoMediaItem> {
+        return getRscSearch(query, show)
+    }
+
+    suspend fun getRscSearch(query: String, show: String = "music"): List<EchoMediaItem> {
+        val encodedQuery = java.net.URLEncoder.encode(query, "UTF-8")
+        val items = getRscItems("https://audiomack.com/search?q=$encodedQuery&show=$show&_rsc=ramnz")
+        return items.mapNotNull {
+            val type = it["type"]?.jsonPrimitive?.content ?: "song"
+            when (type) {
+                "album" -> parseAlbum(it)
+                "artist" -> parseArtist(it)
+                "playlist" -> parsePlaylist(it)
+                else -> parseTrack(it)
+            }
+        }
+    }
+
+    suspend fun getLiveSearch(query: String, limit: Int = 10): JsonObject? {
+        return getJson("livesearch", mapOf("q" to query, "limit" to limit.toString()))
+    }
+
+    suspend fun getQuickSearch(query: String): List<QuickSearchItem> {
+        if (query.isBlank()) return emptyList()
+        val json = getLiveSearch(query.trim(), limit = 10) ?: return emptyList()
+        val results = json["results"]?.jsonArray ?: return emptyList()
+
+        val items = mutableListOf<QuickSearchItem>()
+        val seenQueries = mutableSetOf<String>()
+        val seenMedia = mutableSetOf<String>()
+
+        for (elem in results) {
+            val obj = elem as? JsonObject ?: continue
+            val type = obj["type"]?.jsonPrimitive?.content ?: "song"
+
+            // Query suggestion (artist name or song/album title)
+            val title = (if (type == "artist") obj["name"]?.jsonPrimitive?.content else obj["title"]?.jsonPrimitive?.content)?.trim()
+            if (!title.isNullOrBlank() && seenQueries.add(title.lowercase())) {
+                items.add(QuickSearchItem.Query(query = title, searched = false))
+            }
+
+            // Direct media suggestion
+            val media: EchoMediaItem = when (type) {
+                "artist" -> parseArtist(obj)
+                "album" -> parseAlbum(obj)
+                "playlist" -> parsePlaylist(obj)
+                else -> parseTrack(obj)
+            }
+            if (media.id.isNotBlank() && seenMedia.add("${type}_${media.id}")) {
+                items.add(QuickSearchItem.Media(media = media, searched = false))
+            }
+        }
+        return items
     }
 
     suspend fun getTrackDetail(trackId: String): Track? {

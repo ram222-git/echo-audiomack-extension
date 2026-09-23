@@ -2,9 +2,11 @@ package dev.brahmkshatriya.echo.extension
 
 import dev.brahmkshatriya.echo.common.clients.ExtensionClient
 import dev.brahmkshatriya.echo.common.clients.HomeFeedClient
+import dev.brahmkshatriya.echo.common.clients.QuickSearchClient
 import dev.brahmkshatriya.echo.common.clients.TrackClient
 import dev.brahmkshatriya.echo.common.models.Feed
 import dev.brahmkshatriya.echo.common.models.Feed.Companion.toFeedData
+import dev.brahmkshatriya.echo.common.models.QuickSearchItem
 import dev.brahmkshatriya.echo.common.models.Shelf
 import dev.brahmkshatriya.echo.common.models.Streamable
 import dev.brahmkshatriya.echo.common.models.Streamable.Media.Companion.toServerMedia
@@ -13,8 +15,10 @@ import dev.brahmkshatriya.echo.common.models.Track
 import dev.brahmkshatriya.echo.common.settings.Setting
 import dev.brahmkshatriya.echo.common.settings.SettingTextInput
 import dev.brahmkshatriya.echo.common.settings.Settings
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 
-class AudiomackExtension : ExtensionClient, HomeFeedClient, TrackClient {
+class AudiomackExtension : ExtensionClient, HomeFeedClient, TrackClient, QuickSearchClient {
 
     private lateinit var settings: Settings
     private val api by lazy {
@@ -167,5 +171,126 @@ class AudiomackExtension : ExtensionClient, HomeFeedClient, TrackClient {
 
     override suspend fun loadFeed(track: Track): Feed<Shelf>? {
         return null
+    }
+
+    override suspend fun quickSearch(query: String): List<QuickSearchItem> {
+        return api.getQuickSearch(query)
+    }
+
+    override suspend fun deleteQuickSearch(item: QuickSearchItem) {
+        // Audiomack does not store search history on server
+    }
+
+    override suspend fun loadSearchFeed(query: String): Feed<Shelf> {
+        val tabs = listOf(
+            Tab(id = "all", title = "All"),
+            Tab(id = "songs", title = "Songs"),
+            Tab(id = "playlists", title = "Playlists"),
+            Tab(id = "artists", title = "Artists"),
+            Tab(id = "albums", title = "Albums")
+        )
+
+        return Feed(tabs) { tab ->
+            val tabId = tab?.id ?: "all"
+            val shelves: List<Shelf> = when (tabId) {
+                "playlists" -> {
+                    val playlists = api.searchPlaylists(query, 1)
+                    listOf(
+                        Shelf.Lists.Items(
+                            id = "search_playlists",
+                            title = "Playlists",
+                            list = playlists,
+                            type = Shelf.Lists.Type.Grid
+                        )
+                    )
+                }
+                "artists" -> {
+                    val artists = api.searchArtists(query, 1)
+                    listOf(
+                        Shelf.Lists.Items(
+                            id = "search_artists",
+                            title = "Artists",
+                            list = artists,
+                            type = Shelf.Lists.Type.Grid
+                        )
+                    )
+                }
+                "songs" -> {
+                    val songs = api.searchSongs(query, 1)
+                    listOf(
+                        Shelf.Lists.Tracks(
+                            id = "search_songs",
+                            title = "Songs",
+                            list = songs,
+                            type = Shelf.Lists.Type.Grid
+                        )
+                    )
+                }
+                "albums" -> {
+                    val albums = api.searchAlbums(query, 1)
+                    listOf(
+                        Shelf.Lists.Items(
+                            id = "search_albums",
+                            title = "Albums",
+                            list = albums,
+                            type = Shelf.Lists.Type.Grid
+                        )
+                    )
+                }
+                else -> {
+                    coroutineScope {
+                        val artistsDeferred = async { api.searchArtists(query, 1) }
+                        val songsDeferred = async { api.searchSongs(query, 1) }
+                        val albumsDeferred = async { api.searchAlbums(query, 1) }
+                        val playlistsDeferred = async { api.searchPlaylists(query, 1) }
+
+                        val artists = artistsDeferred.await()
+                        val songs = songsDeferred.await()
+                        val albums = albumsDeferred.await()
+                        val playlists = playlistsDeferred.await()
+
+                        val resultShelves = mutableListOf<Shelf>()
+                        if (songs.isNotEmpty()) {
+                            resultShelves.add(
+                                Shelf.Lists.Tracks(
+                                    id = "search_all_songs",
+                                    title = "Songs",
+                                    list = songs
+                                )
+                            )
+                        }
+                        if (albums.isNotEmpty()) {
+                            resultShelves.add(
+                                Shelf.Lists.Items(
+                                    id = "search_all_albums",
+                                    title = "Albums",
+                                    list = albums
+                                )
+                            )
+                        }
+                        if (artists.isNotEmpty()) {
+                            resultShelves.add(
+                                Shelf.Lists.Items(
+                                    id = "search_accounts",
+                                    title = "Artists",
+                                    list = artists.take(5)
+                                )
+                            )
+                        }
+                        if (playlists.isNotEmpty()) {
+                            resultShelves.add(
+                                Shelf.Lists.Items(
+                                    id = "search_all_playlists",
+                                    title = "Playlists",
+                                    list = playlists
+                                )
+                            )
+                        }
+                        resultShelves
+                    }
+                }
+            }
+            shelves.toFeedData()
+        }
     }
 }

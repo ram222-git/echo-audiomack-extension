@@ -2,7 +2,9 @@ package dev.brahmkshatriya.echo.extension
 
 import dev.brahmkshatriya.echo.common.clients.ExtensionClient
 import dev.brahmkshatriya.echo.common.clients.HomeFeedClient
+import dev.brahmkshatriya.echo.common.clients.QuickSearchClient
 import dev.brahmkshatriya.echo.common.clients.TrackClient
+import dev.brahmkshatriya.echo.common.models.QuickSearchItem
 import dev.brahmkshatriya.echo.common.models.Shelf
 import dev.brahmkshatriya.echo.common.models.Streamable
 import dev.brahmkshatriya.echo.common.models.Tab
@@ -97,6 +99,67 @@ class ExtensionUnitTest {
             }
             else -> error("Unexpected media type: $media")
         }
+    }
+
+    @Test
+    fun testQuickSearchSuggestions() = testIn("Testing Quick Search Suggestions") {
+        if (extension !is QuickSearchClient) error("QuickSearchClient is not implemented")
+        val suggestions = extension.quickSearch("Sidhu Moose Wala")
+        println("Quick Search items count: ${suggestions.size}")
+        assert(suggestions.isNotEmpty()) { "QuickSearch returned no items" }
+
+        val querySuggestions = suggestions.filterIsInstance<QuickSearchItem.Query>()
+        val mediaSuggestions = suggestions.filterIsInstance<QuickSearchItem.Media>()
+
+        println(" - Query suggestions: ${querySuggestions.map { it.query }}")
+        println(" - Media suggestions: ${mediaSuggestions.map { "${it.media.title} (${it.media::class.simpleName})" }}")
+
+        assert(querySuggestions.isNotEmpty() || mediaSuggestions.isNotEmpty())
+    }
+
+    @Test
+    fun testSearchFeedWithTabs() = testIn("Testing Search Feed with All 5 Tabs") {
+        if (extension !is QuickSearchClient) error("QuickSearchClient is not implemented")
+        val feed = extension.loadSearchFeed("Sidhu Moose Wala")
+        val expectedTabs = listOf("all", "songs", "playlists", "artists", "albums")
+        println("Feed tabs: ${feed.tabs.map { "${it.title} (${it.id})" }}")
+
+        assert(feed.tabs.map { it.id } == expectedTabs) {
+            "Expected tabs $expectedTabs but got ${feed.tabs.map { it.id }}"
+        }
+
+        // 1. Test "all" tab
+        val allShelves = feed.getPagedData(Tab("all", "All")).pagedData.loadPage(null).data
+        println("=== 'all' tab shelves count: ${allShelves.size} ===")
+        allShelves.forEach { shelf ->
+            val count = when (shelf) {
+                is Shelf.Lists.Tracks -> shelf.list.size
+                is Shelf.Lists.Items -> shelf.list.size
+                else -> 0
+            }
+            println(" - Shelf: [${shelf.id}] '${shelf.title}' -> $count items")
+        }
+        assert(allShelves.isNotEmpty()) { "'all' tab shelves were empty" }
+
+        // 2. Test "playlists" tab
+        val playlistShelves = feed.getPagedData(Tab("playlists", "Playlists")).pagedData.loadPage(null).data
+        println("=== 'playlists' tab shelves count: ${playlistShelves.size} ===")
+        assert(playlistShelves.isNotEmpty())
+
+        // 3. Test "artists" tab
+        val artistShelves = feed.getPagedData(Tab("artists", "Artists")).pagedData.loadPage(null).data
+        println("=== 'artists' tab shelves count: ${artistShelves.size} ===")
+        assert(artistShelves.isNotEmpty())
+
+        // 4. Test "songs" tab
+        val songShelves = feed.getPagedData(Tab("songs", "Songs")).pagedData.loadPage(null).data
+        println("=== 'songs' tab shelves count: ${songShelves.size} ===")
+        assert(songShelves.isNotEmpty())
+
+        // 5. Test "albums" tab
+        val albumShelves = feed.getPagedData(Tab("albums", "Albums")).pagedData.loadPage(null).data
+        println("=== 'albums' tab shelves count: ${albumShelves.size} ===")
+        assert(albumShelves.isNotEmpty())
     }
 
     // Test Setup
