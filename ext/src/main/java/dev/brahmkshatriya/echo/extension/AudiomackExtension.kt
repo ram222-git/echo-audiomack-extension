@@ -1,12 +1,17 @@
 package dev.brahmkshatriya.echo.extension
 
 import dev.brahmkshatriya.echo.common.clients.AlbumClient
+import dev.brahmkshatriya.echo.common.clients.ArtistClient
 import dev.brahmkshatriya.echo.common.clients.ExtensionClient
 import dev.brahmkshatriya.echo.common.clients.HomeFeedClient
 import dev.brahmkshatriya.echo.common.clients.PlaylistClient
 import dev.brahmkshatriya.echo.common.clients.QuickSearchClient
 import dev.brahmkshatriya.echo.common.clients.TrackClient
+import dev.brahmkshatriya.echo.common.helpers.Page
+import dev.brahmkshatriya.echo.common.helpers.PagedData
 import dev.brahmkshatriya.echo.common.models.Album
+import dev.brahmkshatriya.echo.common.models.Artist
+import dev.brahmkshatriya.echo.common.models.EchoMediaItem
 import dev.brahmkshatriya.echo.common.models.Feed
 import dev.brahmkshatriya.echo.common.models.Feed.Companion.toFeed
 import dev.brahmkshatriya.echo.common.models.Feed.Companion.toFeedData
@@ -23,7 +28,7 @@ import dev.brahmkshatriya.echo.common.settings.Settings
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 
-class AudiomackExtension : ExtensionClient, HomeFeedClient, TrackClient, QuickSearchClient, AlbumClient, PlaylistClient {
+class AudiomackExtension : ExtensionClient, HomeFeedClient, TrackClient, QuickSearchClient, AlbumClient, PlaylistClient, ArtistClient {
 
     private lateinit var settings: Settings
     private val api by lazy {
@@ -84,17 +89,20 @@ class AudiomackExtension : ExtensionClient, HomeFeedClient, TrackClient, QuickSe
                         Shelf.Lists.Tracks(
                             id = "top_songs",
                             title = "Top Songs",
-                            list = topSongs
+                            list = topSongs,
+                            more = Feed(emptyList()) { topSongs.map { Shelf.Item(it) }.toFeedData() }
                         ),
                         Shelf.Lists.Items(
                             id = "top_albums",
                             title = "Top Albums",
-                            list = topAlbums
+                            list = topAlbums,
+                            more = Feed(emptyList()) { topAlbums.map { Shelf.Item(it) }.toFeedData() }
                         ),
                         Shelf.Lists.Items(
                             id = "top_playlists",
                             title = "Top Playlists",
-                            list = topPlaylists
+                            list = topPlaylists,
+                            more = Feed(emptyList()) { topPlaylists.map { Shelf.Item(it) }.toFeedData() }
                         )
                     )
                 }
@@ -105,12 +113,14 @@ class AudiomackExtension : ExtensionClient, HomeFeedClient, TrackClient, QuickSe
                         Shelf.Lists.Items(
                             id = "browse_playlists",
                             title = "Featured Playlists",
-                            list = playlists
+                            list = playlists,
+                            more = Feed(emptyList()) { playlists.map { Shelf.Item(it) }.toFeedData() }
                         ),
                         Shelf.Lists.Items(
                             id = "browse_albums",
                             title = "Top Albums",
-                            list = albums
+                            list = albums,
+                            more = Feed(emptyList()) { albums.map { Shelf.Item(it) }.toFeedData() }
                         )
                     )
                 }
@@ -122,17 +132,20 @@ class AudiomackExtension : ExtensionClient, HomeFeedClient, TrackClient, QuickSe
                         Shelf.Lists.Tracks(
                             id = "trending_now",
                             title = "Trending Now",
-                            list = trending
+                            list = trending,
+                            more = Feed(emptyList()) { trending.map { Shelf.Item(it) }.toFeedData() }
                         ),
                         Shelf.Lists.Items(
                             id = "artists_for_you",
                             title = "Artists For You",
-                            list = artists
+                            list = artists,
+                            more = Feed(emptyList()) { artists.map { Shelf.Item(it) }.toFeedData() }
                         ),
                         Shelf.Lists.Tracks(
                             id = "recent_releases",
                             title = "Recent Releases",
-                            list = recent
+                            list = recent,
+                            more = Feed(emptyList()) { recent.map { Shelf.Item(it) }.toFeedData() }
                         )
                     )
                 }
@@ -200,47 +213,19 @@ class AudiomackExtension : ExtensionClient, HomeFeedClient, TrackClient, QuickSe
             val shelves: List<Shelf> = when (tabId) {
                 "playlists" -> {
                     val playlists = api.searchPlaylists(query, 1)
-                    listOf(
-                        Shelf.Lists.Items(
-                            id = "search_playlists",
-                            title = "Playlists",
-                            list = playlists,
-                            type = Shelf.Lists.Type.Grid
-                        )
-                    )
+                    playlists.map { Shelf.Item(it) }
                 }
                 "artists" -> {
                     val artists = api.searchArtists(query, 1)
-                    listOf(
-                        Shelf.Lists.Items(
-                            id = "search_artists",
-                            title = "Artists",
-                            list = artists,
-                            type = Shelf.Lists.Type.Grid
-                        )
-                    )
+                    artists.map { Shelf.Item(it) }
                 }
                 "songs" -> {
                     val songs = api.searchSongs(query, 1)
-                    listOf(
-                        Shelf.Lists.Tracks(
-                            id = "search_songs",
-                            title = "Songs",
-                            list = songs,
-                            type = Shelf.Lists.Type.Grid
-                        )
-                    )
+                    songs.map { Shelf.Item(it) }
                 }
                 "albums" -> {
                     val albums = api.searchAlbums(query, 1)
-                    listOf(
-                        Shelf.Lists.Items(
-                            id = "search_albums",
-                            title = "Albums",
-                            list = albums,
-                            type = Shelf.Lists.Type.Grid
-                        )
-                    )
+                    albums.map { Shelf.Item(it) }
                 }
                 else -> {
                     coroutineScope {
@@ -260,7 +245,8 @@ class AudiomackExtension : ExtensionClient, HomeFeedClient, TrackClient, QuickSe
                                 Shelf.Lists.Tracks(
                                     id = "search_all_songs",
                                     title = "Songs",
-                                    list = songs
+                                    list = songs,
+                                    more = Feed(emptyList()) { songs.map { Shelf.Item(it) }.toFeedData() }
                                 )
                             )
                         }
@@ -269,7 +255,8 @@ class AudiomackExtension : ExtensionClient, HomeFeedClient, TrackClient, QuickSe
                                 Shelf.Lists.Items(
                                     id = "search_all_albums",
                                     title = "Albums",
-                                    list = albums
+                                    list = albums,
+                                    more = Feed(emptyList()) { albums.map { Shelf.Item(it) }.toFeedData() }
                                 )
                             )
                         }
@@ -278,7 +265,8 @@ class AudiomackExtension : ExtensionClient, HomeFeedClient, TrackClient, QuickSe
                                 Shelf.Lists.Items(
                                     id = "search_accounts",
                                     title = "Artists",
-                                    list = artists.take(5)
+                                    list = artists.take(5),
+                                    more = Feed(emptyList()) { artists.map { Shelf.Item(it) }.toFeedData() }
                                 )
                             )
                         }
@@ -287,7 +275,8 @@ class AudiomackExtension : ExtensionClient, HomeFeedClient, TrackClient, QuickSe
                                 Shelf.Lists.Items(
                                     id = "search_all_playlists",
                                     title = "Playlists",
-                                    list = playlists
+                                    list = playlists,
+                                    more = Feed(emptyList()) { playlists.map { Shelf.Item(it) }.toFeedData() }
                                 )
                             )
                         }
@@ -335,5 +324,133 @@ class AudiomackExtension : ExtensionClient, HomeFeedClient, TrackClient, QuickSe
 
     override suspend fun loadFeed(playlist: Playlist): Feed<Shelf>? {
         return null
+    }
+
+    // ArtistClient Implementation
+    override suspend fun loadArtist(artist: Artist): Artist {
+        val pageData = api.getArtistPageData(api.extractArtistSlug(artist))
+        if (pageData != null) {
+            val a = pageData.artist
+            return artist.copy(
+                id = a.id,
+                name = a.name.ifBlank { artist.name },
+                cover = a.cover ?: artist.cover,
+                bio = a.bio ?: artist.bio,
+                background = a.background ?: a.cover ?: artist.background,
+                subtitle = a.subtitle ?: artist.subtitle,
+                extras = if (a.extras.isNotEmpty()) a.extras else artist.extras
+            )
+        }
+        return artist
+    }
+
+    override suspend fun loadFeed(artist: Artist): Feed<Shelf> {
+        val artistSlug = api.extractArtistSlug(artist)
+        val pageData = api.getArtistPageData(artistSlug)
+
+        return Feed(emptyList()) { _ ->
+            val list = mutableListOf<Shelf>()
+
+            pageData?.highlights?.takeIf { it.isNotEmpty() }?.let { items ->
+                list.add(
+                    Shelf.Lists.Items(
+                        id = "artist_highlighted",
+                        title = "Highlighted",
+                        list = items,
+                        type = Shelf.Lists.Type.Linear
+                    )
+                )
+            }
+
+            pageData?.topSongs?.takeIf { it.isNotEmpty() }?.let { songs ->
+                val moreSongsFeed = Feed<Shelf>(emptyList()) { _ ->
+                    val pagedData = PagedData.Continuous<Shelf> { continuation ->
+                        val pageNum = continuation?.toIntOrNull() ?: 1
+                        val pageSongs = api.getArtistUploads(artistSlug, page = pageNum, limit = 50)
+                        val nextCont = if (pageSongs.size >= 50) (pageNum + 1).toString() else null
+                        Page(
+                            pageSongs.map { Shelf.Item(it) },
+                            nextCont
+                        )
+                    }
+                    pagedData.toFeedData(
+                        buttons = Feed.Buttons(
+                            showSearch = true,
+                            showSort = false,
+                            showPlayAndShuffle = true
+                        )
+                    )
+                }
+
+                list.add(
+                    Shelf.Lists.Tracks(
+                        id = "artist_top_songs",
+                        title = "Top songs",
+                        list = songs,
+                        type = Shelf.Lists.Type.Linear,
+                        more = moreSongsFeed
+                    )
+                )
+            }
+
+            pageData?.topAlbums?.takeIf { it.isNotEmpty() }?.let { albums ->
+                val moreAlbumsFeed = Feed<Shelf>(emptyList()) { _ ->
+                    albums.map { Shelf.Item(it) }.toFeedData()
+                }
+
+                list.add(
+                    Shelf.Lists.Items(
+                        id = "artist_recent_albums",
+                        title = "Albums",
+                        list = albums,
+                        type = Shelf.Lists.Type.Linear,
+                        more = moreAlbumsFeed
+                    )
+                )
+            }
+
+            val featuring = pageData?.playlistsFeaturing.orEmpty()
+            if (featuring.isNotEmpty()) {
+                val moreFeaturingFeed = Feed<Shelf>(emptyList()) { _ ->
+                    featuring.map { Shelf.Item(it) }.toFeedData()
+                }
+
+                list.add(
+                    Shelf.Lists.Items(
+                        id = "artist_playlists_featuring",
+                        title = "Playlists featuring artist",
+                        list = featuring,
+                        type = Shelf.Lists.Type.Linear,
+                        more = moreFeaturingFeed
+                    )
+                )
+            }
+
+            val ownPlaylists = pageData?.playlists.orEmpty()
+            if (ownPlaylists.isNotEmpty()) {
+                val morePlaylistsFeed = Feed<Shelf>(emptyList()) { _ ->
+                    ownPlaylists.map { Shelf.Item(it) }.toFeedData()
+                }
+
+                list.add(
+                    Shelf.Lists.Items(
+                        id = "artist_playlists",
+                        title = "Playlists",
+                        list = ownPlaylists,
+                        type = Shelf.Lists.Type.Linear,
+                        more = morePlaylistsFeed
+                    )
+                )
+            }
+
+            list.toFeedData(
+                buttons = Feed.Buttons(
+                    showSearch = true,
+                    showSort = false,
+                    showPlayAndShuffle = pageData?.topSongs?.isNotEmpty() == true,
+                    customTrackList = pageData?.topSongs
+                )
+            )
+        }
     }
 }

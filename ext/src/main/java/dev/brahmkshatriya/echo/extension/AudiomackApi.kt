@@ -518,16 +518,40 @@ class AudiomackApi(
             ?: "Unknown Artist"
         val coverUrl = json["image"]?.jsonPrimitive?.content
             ?: json["image_base"]?.jsonPrimitive?.content
+        val bannerUrl = json["image_banner"]?.jsonPrimitive?.content
+        val bio = json["bio"]?.jsonPrimitive?.content
+        val urlSlug = json["url_slug"]?.jsonPrimitive?.content ?: ""
+
+        val followers = json["followers_count"]?.jsonPrimitive?.content
+        val plays = (json["stats"] as? JsonObject)?.get("plays")?.jsonPrimitive?.content
+        val subtitle = listOfNotNull(
+            if (!followers.isNullOrBlank()) "$followers Followers" else null,
+            if (!plays.isNullOrBlank()) "$plays Plays" else null
+        ).joinToString(" • ").ifBlank {
+            if (urlSlug.isNotBlank()) "@$urlSlug" else null
+        }
+
+        val extras = mutableMapOf<String, String>()
+        if (urlSlug.isNotBlank()) {
+            extras["url_slug"] = urlSlug
+            extras["artist_slug"] = urlSlug
+        }
+        if (id.isNotBlank()) extras["id"] = id
 
         return Artist(
-            id = id,
+            id = urlSlug.ifBlank { id },
             name = name,
-            cover = coverUrl?.toImageHolder()
+            cover = coverUrl?.toImageHolder(),
+            background = (bannerUrl ?: coverUrl)?.toImageHolder(),
+            bio = bio,
+            subtitle = subtitle,
+            extras = extras
         )
     }
 
     fun parsePlaylist(json: JsonObject): Playlist {
-        val id = json["id"]?.jsonPrimitive?.content ?: ""
+        val id = json["id"]?.jsonPrimitive?.content
+            ?: json["playlistId"]?.jsonPrimitive?.content ?: ""
         val title = json["title"]?.jsonPrimitive?.content ?: "Unknown Playlist"
         val coverUrl = json["image"]?.jsonPrimitive?.content
             ?: json["image_base"]?.jsonPrimitive?.content
@@ -535,14 +559,20 @@ class AudiomackApi(
             ?: json["tracks"]?.jsonArray?.size?.toLong()
         val durationSec = json["tracks_total_seconds"]?.jsonPrimitive?.content?.toLongOrNull() ?: 0L
         val durationMs = if (durationSec > 0) durationSec * 1000 else null
+
+        val selfLink = json["links"]?.jsonObject?.get("self")?.jsonPrimitive?.content
+        val (linkArtist, linkSlug) = if (!selfLink.isNullOrBlank()) extractArtistAndSlug(selfLink) else Pair(null, null)
+
         val authorName = when (val a = json["artist"]) {
             is JsonObject -> a["name"]?.jsonPrimitive?.content
             else -> a?.jsonPrimitive?.content
         } ?: json["uploader"]?.jsonObject?.get("name")?.jsonPrimitive?.content
             ?: "Audiomack"
         val authorSlug = json["uploader"]?.jsonObject?.get("url_slug")?.jsonPrimitive?.content
-            ?: json["uploader_url_slug"]?.jsonPrimitive?.content ?: ""
-        val urlSlug = json["url_slug"]?.jsonPrimitive?.content ?: ""
+            ?: json["uploader_url_slug"]?.jsonPrimitive?.content
+            ?: (json["artist"] as? JsonObject)?.get("url_slug")?.jsonPrimitive?.content
+            ?: linkArtist ?: ""
+        val urlSlug = json["url_slug"]?.jsonPrimitive?.content ?: linkSlug ?: ""
         val description = json["description"]?.jsonPrimitive?.content
 
         val extras = mutableMapOf<String, String>()
@@ -657,4 +687,155 @@ class AudiomackApi(
             else -> Pair(null, null)
         }
     }
+
+    private val artistCache = mutableMapOf<String, Pair<Long, ArtistPageData>>()
+
+    fun extractArtistSlug(artist: Artist): String {
+        val fromExtras = artist.extras["url_slug"] ?: artist.extras["artist_slug"]
+        if (!fromExtras.isNullOrBlank()) return fromExtras
+        return extractArtistSlug(artist.id)
+    }
+
+    fun extractArtistSlug(idOrUrl: String): String {
+        val clean = idOrUrl.substringBefore("?").removePrefix("https://").removePrefix("http://").removePrefix("audiomack.com/").trim('/')
+        val parts = clean.split('/')
+        return when {
+            parts.size >= 2 && parts[0] == "artist" -> parts[1]
+            parts.isNotEmpty() && parts[0].isNotBlank() -> parts[0]
+            else -> idOrUrl
+        }
+    }
+
+    suspend fun getArtistPageData(artistIdOrUrl: String): ArtistPageData? {
+        val rawSlug = extractArtistSlug(artistIdOrUrl)
+        if (rawSlug.isBlank()) return null
+        val now = System.currentTimeMillis()
+        val cached = artistCache[rawSlug]
+        if (cached != null && (now - cached.first) < 300_000) {
+            return cached.second
+        }
+
+        val slug = if (rawSlug.all { it.isDigit() }) {
+            val apiRes = getJson("artist/$rawSlug")
+            val results = apiRes?.get("results")?.jsonObject
+            results?.get("url_slug")?.jsonPrimitive?.content ?: rawSlug
+        } else rawSlug
+
+        val cachedBySlug = artistCache[slug]
+        if (cachedBySlug != null && (now - cachedBySlug.first) < 300_000) {
+            return cachedBySlug.second
+        }
+
+        // 1. Fetch web RSC
+        val rscUrl = "https://audiomack.com/$slug?_rsc=ramnz"
+        val rscRequest = Request.Builder()
+            .url(rscUrl)
+            .header("RSC", "1")
+            .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)")
+            .header("Referer", "https://audiomack.com/")
+            .build()
+
+        try {
+            val response = client.newCall(rscRequest).await()
+            if (response.isSuccessful) {
+                val body = response.body?.string() ?: ""
+                val line = body.lines().firstOrNull { it.contains("ArtistPage-content") }
+                if (line != null) {
+                    val jsonPart = line.substringAfter(":")
+                    val element = json.parseToJsonElement(jsonPart) as? JsonArray
+                    val children = (element?.getOrNull(3) as? JsonObject)?.get("children") as? JsonArray
+                    val child0Props = (children?.getOrNull(0) as? JsonArray)?.getOrNull(3) as? JsonObject
+                    val child1Props = (children?.getOrNull(1) as? JsonArray)?.getOrNull(3) as? JsonObject
+
+                    val artistObj = (child0Props?.get("artist") ?: child1Props?.get("artist")) as? JsonObject
+                    val baseArtist = if (artistObj != null) parseArtist(artistObj) else null
+
+                    val highlightsArr = child1Props?.get("highlights") as? JsonArray
+                    val highlights = highlightsArr?.mapNotNull { item ->
+                        val obj = item as? JsonObject ?: return@mapNotNull null
+                        val type = obj["type"]?.jsonPrimitive?.content
+                        when (type) {
+                            "playlist" -> parsePlaylist(obj)
+                            "album" -> parseAlbum(obj)
+                            else -> parseTrack(obj)
+                        }
+                    }.orEmpty()
+
+                    val topSongsArr = (child1Props?.get("topSongs") as? JsonObject)?.get("results") as? JsonArray
+                    val topSongs = topSongsArr?.mapNotNull { it as? JsonObject }?.map { parseTrack(it) }.orEmpty()
+
+                    val topAlbumsArr = (child1Props?.get("topAlbums") as? JsonObject)?.get("results") as? JsonArray
+                    val topAlbums = topAlbumsArr?.mapNotNull { it as? JsonObject }?.map { parseAlbum(it) }.orEmpty()
+
+                    val playlistsArr = (child1Props?.get("playlists") as? JsonObject)?.get("results") as? JsonArray
+                        ?: (child1Props?.get("playlists") as? JsonObject)?.get("data")?.let {
+                            if (it is JsonObject) it["rows"] as? JsonArray else it as? JsonArray
+                        }
+                    val playlists = playlistsArr?.mapNotNull { it as? JsonObject }?.map { parsePlaylist(it) }.orEmpty()
+
+                    val featObj = child1Props?.get("playlistsFeaturing") as? JsonObject
+                    val featData = featObj?.get("data")
+                    val featRows = when (featData) {
+                        is JsonObject -> featData["rows"] as? JsonArray ?: featData["results"] as? JsonArray
+                        is JsonArray -> featData
+                        else -> null
+                    } ?: featObj?.get("results") as? JsonArray
+                    val playlistsFeaturing = featRows?.mapNotNull { it as? JsonObject }?.map { parsePlaylist(it) }.orEmpty()
+
+                    val likesArr = (child1Props?.get("likes") as? JsonObject)?.get("results") as? JsonArray
+                    val likes = likesArr?.mapNotNull { it as? JsonObject }?.map { parseTrack(it) }.orEmpty()
+
+                    if (baseArtist != null) {
+                        val result = ArtistPageData(
+                            artist = baseArtist,
+                            highlights = highlights,
+                            topSongs = topSongs,
+                            topAlbums = topAlbums,
+                            playlists = playlists,
+                            playlistsFeaturing = playlistsFeaturing,
+                            likes = likes
+                        )
+                        artistCache[rawSlug] = Pair(now, result)
+                        artistCache[slug] = Pair(now, result)
+                        return result
+                    }
+                }
+            }
+        } catch (_: Exception) {}
+
+        // Fallback to official REST API
+        val apiArtistJson = getJson("artist/$slug")?.get("results") as? JsonObject ?: return null
+        val baseArtist = parseArtist(apiArtistJson)
+        val uploads = getJson("artist/$slug/uploads")?.get("results") as? JsonArray
+        val topSongs = uploads?.mapNotNull { it as? JsonObject }?.map { parseTrack(it) }.orEmpty()
+        val playlistsJson = getJson("artist/$slug/playlists")?.get("results") as? JsonArray
+        val playlists = playlistsJson?.mapNotNull { it as? JsonObject }?.map { parsePlaylist(it) }.orEmpty()
+
+        val result = ArtistPageData(
+            artist = baseArtist,
+            topSongs = topSongs,
+            playlists = playlists
+        )
+        artistCache[rawSlug] = Pair(now, result)
+        artistCache[slug] = Pair(now, result)
+        return result
+    }
+
+    suspend fun getArtistUploads(artistSlug: String, page: Int = 1, limit: Int = 50): List<Track> {
+        val cleanSlug = extractArtistSlug(artistSlug)
+        val json = getJson("artist/$cleanSlug/uploads", mapOf("page" to page.toString(), "limit" to limit.toString()))
+        val results = json?.get("results") as? JsonArray ?: return emptyList()
+        return results.mapNotNull { it as? JsonObject }.map { parseTrack(it) }
+    }
 }
+
+data class ArtistPageData(
+    val artist: Artist,
+    val highlights: List<EchoMediaItem> = emptyList(),
+    val topSongs: List<Track> = emptyList(),
+    val topAlbums: List<Album> = emptyList(),
+    val playlists: List<Playlist> = emptyList(),
+    val playlistsFeaturing: List<Playlist> = emptyList(),
+    val likes: List<Track> = emptyList()
+)
+

@@ -1,12 +1,14 @@
 package dev.brahmkshatriya.echo.extension
 
 import dev.brahmkshatriya.echo.common.clients.AlbumClient
+import dev.brahmkshatriya.echo.common.clients.ArtistClient
 import dev.brahmkshatriya.echo.common.clients.ExtensionClient
 import dev.brahmkshatriya.echo.common.clients.HomeFeedClient
 import dev.brahmkshatriya.echo.common.clients.PlaylistClient
 import dev.brahmkshatriya.echo.common.clients.QuickSearchClient
 import dev.brahmkshatriya.echo.common.clients.TrackClient
 import dev.brahmkshatriya.echo.common.models.Album
+import dev.brahmkshatriya.echo.common.models.Artist
 import dev.brahmkshatriya.echo.common.models.Playlist
 import dev.brahmkshatriya.echo.common.models.QuickSearchItem
 import dev.brahmkshatriya.echo.common.models.Shelf
@@ -17,6 +19,7 @@ import dev.brahmkshatriya.echo.common.models.User
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.DelicateCoroutinesApi
 import kotlinx.coroutines.Dispatchers
@@ -33,6 +36,7 @@ import org.junit.Test
 @ExperimentalCoroutinesApi
 class ExtensionUnitTest {
     private val extension: ExtensionClient = AudiomackExtension()
+    private val api = AudiomackApi()
     private val user = User("", "Test User")
 
     @Test
@@ -223,6 +227,58 @@ class ExtensionUnitTest {
         assert(tracks.isNotEmpty()) { "Playlist tracks should not be empty" }
         assert(tracks.any { it.title.contains("Ghostface Killah", ignoreCase = true) }) {
             "Expected 'Ghostface Killah' in playlist tracks"
+        }
+    }
+
+    @Test
+    fun testLoadArtistAndFeed() = testIn("Testing Load Artist and Feed") {
+        if (extension !is ArtistClient) error("ArtistClient is not implemented")
+
+        val artistUrl = "https://audiomack.com/karanaujla?_rsc=ramnz"
+        val initialArtist = Artist(id = artistUrl, name = "")
+        val loadedArtist = extension.loadArtist(initialArtist)
+
+        println("Loaded Artist Name: ${loadedArtist.name}")
+        println("Loaded Artist Bio: ${loadedArtist.bio?.take(60)}...")
+        println("Loaded Artist Subtitle: ${loadedArtist.subtitle}")
+
+        assert(loadedArtist.name.contains("Karan Aujla", ignoreCase = true)) {
+            "Artist name should be Karan Aujla"
+        }
+        assert(loadedArtist.cover != null) { "Artist cover should not be null" }
+
+        val feed = extension.loadFeed(loadedArtist)
+        println("Feed tabs: ${feed.tabs.map { "${it.title} (${it.id})" }}")
+        assert(feed.tabs.isEmpty()) { "Tabs should be removed from artist page feed" }
+
+        val shelves = feed.getPagedData(null).pagedData.loadPage(null).data
+        println("=== Artist Shelves count: ${shelves.size} ===")
+        shelves.forEach { shelf ->
+            val (count, morePresent) = when (shelf) {
+                is Shelf.Lists.Tracks -> Pair(shelf.list.size, shelf.more != null)
+                is Shelf.Lists.Items -> Pair(shelf.list.size, shelf.more != null)
+                else -> Pair(0, false)
+            }
+            println(" - Shelf: [${shelf.id}] '${shelf.title}' -> $count items (has more arrow: $morePresent)")
+        }
+
+        val topSongsShelf = shelves.filterIsInstance<Shelf.Lists.Tracks>().firstOrNull { it.id == "artist_top_songs" }
+        assert(topSongsShelf != null) { "Top songs shelf should exist" }
+        assert(topSongsShelf!!.more != null) { "Top songs shelf should have a 'more' feed for arrow click" }
+
+        // Test clicking the arrow (more feed) for Top songs
+        println("\n-- Testing Clicking Arrow (More feed) on Top songs --")
+        val morePage = topSongsShelf.more!!.getPagedData(null).pagedData.loadPage(null)
+        val moreShelves = morePage.data
+        val firstPageItems = moreShelves.filterIsInstance<Shelf.Item>()
+        println("More All Songs page 1: ${firstPageItems.size} items (1-row per song), continuation: ${morePage.continuation}")
+        assert(firstPageItems.size >= 20) { "Expected all songs page to load at least 20 songs as Shelf.Item" }
+
+        if (morePage.continuation != null) {
+            val page2 = topSongsShelf.more!!.getPagedData(null).pagedData.loadPage(morePage.continuation)
+            val secondPageItems = page2.data.filterIsInstance<Shelf.Item>()
+            println("More All Songs page 2: ${secondPageItems.size} items (1-row per song), continuation: ${page2.continuation}")
+            assert(secondPageItems.isNotEmpty()) { "Expected page 2 to load songs" }
         }
     }
 
