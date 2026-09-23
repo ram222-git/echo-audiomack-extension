@@ -328,7 +328,8 @@ class AudiomackExtension : ExtensionClient, HomeFeedClient, TrackClient, QuickSe
 
     // ArtistClient Implementation
     override suspend fun loadArtist(artist: Artist): Artist {
-        val pageData = api.getArtistPageData(api.extractArtistSlug(artist))
+        val officialSlug = api.resolveOfficialArtistSlug(artist)
+        val pageData = api.getArtistPageData(officialSlug)
         if (pageData != null) {
             val a = pageData.artist
             return artist.copy(
@@ -338,14 +339,14 @@ class AudiomackExtension : ExtensionClient, HomeFeedClient, TrackClient, QuickSe
                 bio = a.bio ?: artist.bio,
                 background = a.background ?: a.cover ?: artist.background,
                 subtitle = a.subtitle ?: artist.subtitle,
-                extras = if (a.extras.isNotEmpty()) a.extras else artist.extras
+                extras = (if (a.extras.isNotEmpty()) a.extras else artist.extras) + mapOf("url_slug" to officialSlug)
             )
         }
         return artist
     }
 
     override suspend fun loadFeed(artist: Artist): Feed<Shelf> {
-        val artistSlug = api.extractArtistSlug(artist)
+        val artistSlug = api.resolveOfficialArtistSlug(artist)
         val pageData = api.getArtistPageData(artistSlug)
 
         return Feed(emptyList()) { _ ->

@@ -82,10 +82,17 @@ class ExtensionUnitTest {
         if (extension !is TrackClient) error("TrackClient is not implemented")
         val initialTrack = Track(id = "104665031", title = "Dekhi Match")
         val loadedTrack = extension.loadTrack(initialTrack, false)
-        println("Loaded Track: ${loadedTrack.title} by ${loadedTrack.artists.firstOrNull()?.name}")
+        println("Loaded Track: ${loadedTrack.title}")
+        println("Artists (${loadedTrack.artists.size}): ${loadedTrack.artists.map { "'${it.name}' (id: ${it.id})" }}")
         println("Duration: ${loadedTrack.duration} ms (${(loadedTrack.duration ?: 0) / 1000} seconds)")
         assert(loadedTrack.duration != null && loadedTrack.duration!! > 30000L) {
             "Track duration is null or shorter than 30s: ${loadedTrack.duration}"
+        }
+        assert(loadedTrack.artists.size >= 2) {
+            "Expected multiple artists for Dekhi Match, got ${loadedTrack.artists.size}"
+        }
+        loadedTrack.artists.forEach {
+            assert(!it.name.contains(",")) { "Artist name should not contain comma: ${it.name}" }
         }
     }
 
@@ -280,6 +287,46 @@ class ExtensionUnitTest {
             println("More All Songs page 2: ${secondPageItems.size} items (1-row per song), continuation: ${page2.continuation}")
             assert(secondPageItems.isNotEmpty()) { "Expected page 2 to load songs" }
         }
+    }
+
+    @Test
+    fun testSearchIkky() = testIn("Testing Search Ikky and Verification") {
+        if (extension !is ArtistClient) error("ArtistClient is not implemented")
+        val secondaryArtist = Artist(id = "ikky", name = "Ikky")
+        val resolvedArtist = extension.loadArtist(secondaryArtist)
+        println("Resolved Artist Name: '${resolvedArtist.name}'")
+        println("Resolved Artist ID/Slug: '${resolvedArtist.id}'")
+        println("Resolved Artist Subtitle: '${resolvedArtist.subtitle}'")
+        println("Resolved Artist Cover: '${resolvedArtist.cover}'")
+        println("Resolved Artist Bio: '${resolvedArtist.bio}'")
+
+        val slug = resolvedArtist.extras["url_slug"] ?: resolvedArtist.id
+        assert(slug == "ikky-music") {
+            "Expected Ikky to resolve to official slug 'ikky-music', got id='${resolvedArtist.id}', slug='$slug'"
+        }
+        assert(resolvedArtist.cover != null && !resolvedArtist.cover.toString().contains("default-artist-image")) {
+            "Expected official artist image for Ikky"
+        }
+
+        val feed = extension.loadFeed(resolvedArtist)
+        val shelves = feed.getPagedData(null).pagedData.loadPage(null).data
+        println("Resolved Artist Shelves: ${shelves.map { it.title }}")
+        assert(shelves.isNotEmpty()) { "Official artist feed should not be empty" }
+    }
+
+    @Test
+    fun testSlashArtistSplitting() = testIn("Testing Slash Artist Splitting (e.g. raftaar/krsna)") {
+        val artists1 = api.parseArtists("raftaar/krsna")
+        println("Artists for 'raftaar/krsna': ${artists1.map { it.name }}")
+        assert(artists1.size == 2) { "Expected 2 artists, got ${artists1.size}" }
+        assert(artists1[0].name.equals("raftaar", ignoreCase = true))
+        assert(artists1[1].name.equals("krsna", ignoreCase = true))
+
+        val artists2 = api.parseArtists("raftaar / krsna")
+        println("Artists for 'raftaar / krsna': ${artists2.map { it.name }}")
+        assert(artists2.size == 2) { "Expected 2 artists, got ${artists2.size}" }
+        assert(artists2[0].name.equals("raftaar", ignoreCase = true))
+        assert(artists2[1].name.equals("krsna", ignoreCase = true))
     }
 
     // Test Setup
