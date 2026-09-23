@@ -1,15 +1,22 @@
 package dev.brahmkshatriya.echo.extension
 
+import dev.brahmkshatriya.echo.common.clients.AlbumClient
 import dev.brahmkshatriya.echo.common.clients.ExtensionClient
 import dev.brahmkshatriya.echo.common.clients.HomeFeedClient
+import dev.brahmkshatriya.echo.common.clients.PlaylistClient
 import dev.brahmkshatriya.echo.common.clients.QuickSearchClient
 import dev.brahmkshatriya.echo.common.clients.TrackClient
+import dev.brahmkshatriya.echo.common.models.Album
+import dev.brahmkshatriya.echo.common.models.Playlist
 import dev.brahmkshatriya.echo.common.models.QuickSearchItem
 import dev.brahmkshatriya.echo.common.models.Shelf
 import dev.brahmkshatriya.echo.common.models.Streamable
 import dev.brahmkshatriya.echo.common.models.Tab
 import dev.brahmkshatriya.echo.common.models.Track
 import dev.brahmkshatriya.echo.common.models.User
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.DelicateCoroutinesApi
 import kotlinx.coroutines.Dispatchers
@@ -160,6 +167,63 @@ class ExtensionUnitTest {
         val albumShelves = feed.getPagedData(Tab("albums", "Albums")).pagedData.loadPage(null).data
         println("=== 'albums' tab shelves count: ${albumShelves.size} ===")
         assert(albumShelves.isNotEmpty())
+    }
+
+    @Test
+    fun testLoadAlbumAndTracks() = testIn("Testing Load Album and Tracks") {
+        if (extension !is AlbumClient) error("AlbumClient is not implemented")
+
+        val albumUrl = "https://audiomack.com/himanshu-y/album/p-pop-culture-karan-aujla-ikky?_rsc=ramnz"
+        val initialAlbum = Album(id = albumUrl, title = "")
+        val loadedAlbum = extension.loadAlbum(initialAlbum)
+
+        println("Loaded Album Title: ${loadedAlbum.title}")
+        println("Loaded Album Artists: ${loadedAlbum.artists.map { it.name }}")
+        println("Loaded Album TrackCount: ${loadedAlbum.trackCount}")
+        println("Loaded Album Cover: ${loadedAlbum.cover}")
+
+        assert(loadedAlbum.title.isNotBlank()) { "Album title should not be blank" }
+
+        val tracksFeed = extension.loadTracks(loadedAlbum)
+        assert(tracksFeed != null) { "Album tracks feed should not be null" }
+
+        val tracks = tracksFeed!!.getPagedData(null).pagedData.loadPage(null).data
+        println("Loaded Album Tracks count: ${tracks.size}")
+        tracks.take(5).forEachIndexed { index, track ->
+            println(" ${index + 1}. ${track.title} (${track.artists.map { it.name }}) - ${(track.duration ?: 0) / 1000}s [id: ${track.id}]")
+        }
+
+        assert(tracks.isNotEmpty()) { "Album tracks should not be empty" }
+        assert(tracks.first().id.isNotBlank()) { "Album track ID should not be blank" }
+        assert(tracks.first().duration != null && tracks.first().duration!! > 0) { "Album track duration should be valid" }
+    }
+
+    @Test
+    fun testLoadPlaylistAndTracks() = testIn("Testing Load Playlist and Tracks") {
+        if (extension !is PlaylistClient) error("PlaylistClient is not implemented")
+
+        val playlistUrl = "https://audiomack.com/audiomack-desi/playlist/verified-punjabi?_rsc=ramnz"
+        val initialPlaylist = Playlist(id = playlistUrl, title = "", isEditable = false)
+        val loadedPlaylist = extension.loadPlaylist(initialPlaylist)
+
+        println("Loaded Playlist Title: ${loadedPlaylist.title}")
+        println("Loaded Playlist Authors: ${loadedPlaylist.authors.map { it.name }}")
+        println("Loaded Playlist TrackCount: ${loadedPlaylist.trackCount}")
+        println("Loaded Playlist Description: ${loadedPlaylist.description}")
+
+        assert(loadedPlaylist.title.isNotBlank()) { "Playlist title should not be blank" }
+
+        val tracksFeed = extension.loadTracks(loadedPlaylist)
+        val tracks = tracksFeed.getPagedData(null).pagedData.loadPage(null).data
+        println("Loaded Playlist Tracks count: ${tracks.size}")
+        tracks.take(7).forEachIndexed { index, track ->
+            println(" ${index + 1}. ${track.title} by ${track.artists.map { it.name }} - ${(track.duration ?: 0) / 1000}s [id: ${track.id}]")
+        }
+
+        assert(tracks.isNotEmpty()) { "Playlist tracks should not be empty" }
+        assert(tracks.any { it.title.contains("Ghostface Killah", ignoreCase = true) }) {
+            "Expected 'Ghostface Killah' in playlist tracks"
+        }
     }
 
     // Test Setup

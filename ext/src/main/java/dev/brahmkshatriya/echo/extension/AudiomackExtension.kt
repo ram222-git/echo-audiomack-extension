@@ -1,11 +1,16 @@
 package dev.brahmkshatriya.echo.extension
 
+import dev.brahmkshatriya.echo.common.clients.AlbumClient
 import dev.brahmkshatriya.echo.common.clients.ExtensionClient
 import dev.brahmkshatriya.echo.common.clients.HomeFeedClient
+import dev.brahmkshatriya.echo.common.clients.PlaylistClient
 import dev.brahmkshatriya.echo.common.clients.QuickSearchClient
 import dev.brahmkshatriya.echo.common.clients.TrackClient
+import dev.brahmkshatriya.echo.common.models.Album
 import dev.brahmkshatriya.echo.common.models.Feed
+import dev.brahmkshatriya.echo.common.models.Feed.Companion.toFeed
 import dev.brahmkshatriya.echo.common.models.Feed.Companion.toFeedData
+import dev.brahmkshatriya.echo.common.models.Playlist
 import dev.brahmkshatriya.echo.common.models.QuickSearchItem
 import dev.brahmkshatriya.echo.common.models.Shelf
 import dev.brahmkshatriya.echo.common.models.Streamable
@@ -18,7 +23,7 @@ import dev.brahmkshatriya.echo.common.settings.Settings
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 
-class AudiomackExtension : ExtensionClient, HomeFeedClient, TrackClient, QuickSearchClient {
+class AudiomackExtension : ExtensionClient, HomeFeedClient, TrackClient, QuickSearchClient, AlbumClient, PlaylistClient {
 
     private lateinit var settings: Settings
     private val api by lazy {
@@ -292,5 +297,43 @@ class AudiomackExtension : ExtensionClient, HomeFeedClient, TrackClient, QuickSe
             }
             shelves.toFeedData()
         }
+    }
+
+    // AlbumClient Implementation
+    override suspend fun loadAlbum(album: Album): Album {
+        val artistSlug = album.extras["artist_slug"]
+        val urlSlug = album.extras["url_slug"]
+        val (detail, _) = api.getAlbumDetail(album.id, artistSlug, urlSlug) ?: return album
+        return detail
+    }
+
+    override suspend fun loadTracks(album: Album): Feed<Track>? {
+        val artistSlug = album.extras["artist_slug"]
+        val urlSlug = album.extras["url_slug"]
+        val (_, tracks) = api.getAlbumDetail(album.id, artistSlug, urlSlug) ?: return null
+        return tracks.toFeed()
+    }
+
+    override suspend fun loadFeed(album: Album): Feed<Shelf>? {
+        return null
+    }
+
+    // PlaylistClient Implementation
+    override suspend fun loadPlaylist(playlist: Playlist): Playlist {
+        val artistSlug = playlist.extras["artist_slug"]
+        val urlSlug = playlist.extras["url_slug"]
+        val (detail, _) = api.getPlaylistDetail(playlist.id, artistSlug, urlSlug) ?: return playlist
+        return detail
+    }
+
+    override suspend fun loadTracks(playlist: Playlist): Feed<Track> {
+        val artistSlug = playlist.extras["artist_slug"]
+        val urlSlug = playlist.extras["url_slug"]
+        val (_, tracks) = api.getPlaylistDetail(playlist.id, artistSlug, urlSlug) ?: return emptyList<Track>().toFeed()
+        return tracks.toFeed()
+    }
+
+    override suspend fun loadFeed(playlist: Playlist): Feed<Shelf>? {
+        return null
     }
 }
