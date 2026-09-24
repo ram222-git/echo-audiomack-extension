@@ -985,7 +985,85 @@ class AudiomackApi(
         val results = json?.get("results") as? JsonArray ?: return emptyList()
         return results.mapNotNull { it as? JsonObject }.map { parseTrack(it) }
     }
+
+    suspend fun getTrackFeedData(artistSlug: String, songSlug: String?, currentTrackId: String?): TrackFeedData {
+        val playlists = mutableListOf<Playlist>()
+        val moreSongs = mutableListOf<Track>()
+
+        // 1. Try track page RSC if songSlug is available
+        if (!songSlug.isNullOrBlank()) {
+            val rscUrl = "https://audiomack.com/$artistSlug/song/$songSlug?_rsc=woufp"
+            val request = Request.Builder()
+                .url(rscUrl)
+                .header("RSC", "1")
+                .header("Accept", "text/x-component")
+                .header("User-Agent", "Mozilla/5.0")
+                .build()
+            try {
+                val response = client.newCall(request).await()
+                if (response.isSuccessful) {
+                    val body = response.body?.string().orEmpty()
+                    for (line in body.lines()) {
+                        if (line.contains("playlistId")) {
+                            val jsonPart = if (line.contains(":")) line.substringAfter(":") else line
+                            try {
+                                val parsed = json.parseToJsonElement(jsonPart)
+                                fun findPlaylists(element: JsonElement) {
+                                    if (element is JsonObject) {
+                                        if (element.containsKey("playlistId") || (element.containsKey("id") && element["type"]?.jsonPrimitive?.content == "playlist")) {
+                                            playlists.add(parsePlaylist(element))
+                                        }
+                                        val rows = element["rows"] as? JsonArray
+                                        if (rows != null) {
+                                            for (r in rows) {
+                                                if (r is JsonObject && (r.containsKey("playlistId") || r.containsKey("id"))) {
+                                                    playlists.add(parsePlaylist(r))
+                                                }
+                                            }
+                                        }
+                                        for ((_, v) in element) findPlaylists(v)
+                                    } else if (element is JsonArray) {
+                                        for (item in element) findPlaylists(item)
+                                    }
+                                }
+                                findPlaylists(parsed)
+                            } catch (_: Exception) {}
+                        }
+                    }
+                }
+            } catch (_: Exception) {}
+        }
+
+        // 2. If playlists is empty, fallback to artist page playlistsFeaturing
+        if (playlists.isEmpty()) {
+            val artistData = getArtistPageData(artistSlug)
+            if (artistData != null) {
+                playlists.addAll(artistData.playlistsFeaturing)
+            }
+        }
+
+        // 3. For More from Artist: get artist uploads/topSongs excluding current track
+        val artistUploads = getArtistUploads(artistSlug, page = 1, limit = 15)
+        val filtered = artistUploads.filter { it.id != currentTrackId && it.extras["url_slug"] != songSlug }
+        moreSongs.addAll(filtered.take(10))
+
+        if (moreSongs.isEmpty()) {
+            val artistData = getArtistPageData(artistSlug)
+            val fallbackSongs = artistData?.topSongs?.filter { it.id != currentTrackId && it.extras["url_slug"] != songSlug }.orEmpty()
+            moreSongs.addAll(fallbackSongs.take(10))
+        }
+
+        return TrackFeedData(
+            moreFromArtist = moreSongs,
+            playlistsFeaturing = playlists.distinctBy { it.id }
+        )
+    }
 }
+
+data class TrackFeedData(
+    val moreFromArtist: List<Track> = emptyList(),
+    val playlistsFeaturing: List<Playlist> = emptyList()
+)
 
 data class ArtistPageData(
     val artist: Artist,

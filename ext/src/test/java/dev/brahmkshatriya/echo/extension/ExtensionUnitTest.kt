@@ -329,6 +329,42 @@ class ExtensionUnitTest {
         assert(artists2[1].name.equals("krsna", ignoreCase = true))
     }
 
+    @Test
+    fun testTrackFeed() = testIn("Testing Track Info Feed (More from Artist & Playlists Featuring)") {
+        if (extension !is TrackClient) error("TrackClient is not implemented")
+        val track = Track(
+            id = "47317203",
+            title = "Wavy",
+            artists = listOf(Artist(id = "karanaujla", name = "Karan Aujla")),
+            extras = mapOf("artist_slug" to "karanaujla", "url_slug" to "wavy")
+        )
+        val feed = extension.loadFeed(track)
+        assert(feed != null) { "Track feed should not be null" }
+
+        val shelves = feed!!.getPagedData(null).pagedData.loadPage(null).data
+        println("Track Info Feed Shelves: ${shelves.size}")
+        shelves.forEach { shelf ->
+            val count = when (shelf) {
+                is Shelf.Lists.Tracks -> shelf.list.size
+                is Shelf.Lists.Items -> shelf.list.size
+                else -> 0
+            }
+            println(" - [${shelf.id}] '${shelf.title}' -> $count items")
+        }
+
+        assert(shelves.isNotEmpty()) { "Track feed should contain shelves" }
+        val moreFromArtist = shelves.firstOrNull { it.id == "track_more_from_artist" }
+        assert(moreFromArtist != null) { "Should have 'More from artist' shelf" }
+
+        val playlistsFeaturing = shelves.firstOrNull { it.id == "track_playlists_featuring" }
+        assert(playlistsFeaturing != null) { "Should have 'Playlists featuring artist' shelf" }
+        val featuringList = (playlistsFeaturing as Shelf.Lists.Items).list
+        println("Playlists featuring: ${featuringList.map { it.title }}")
+        assert(featuringList.any { it.title.contains("Karan Aujla Essentials", ignoreCase = true) || it.title.contains("808 Pind", ignoreCase = true) }) {
+            "Expected 808 Pind or Karan Aujla Essentials in playlists featuring"
+        }
+    }
+
     // Test Setup
     private val mainThreadSurrogate = newSingleThreadContext("UI thread")
 

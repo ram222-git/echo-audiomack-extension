@@ -187,8 +187,66 @@ class AudiomackExtension : ExtensionClient, HomeFeedClient, TrackClient, QuickSe
         )
     }
 
-    override suspend fun loadFeed(track: Track): Feed<Shelf>? {
-        return null
+    override suspend fun loadFeed(track: Track): Feed<Shelf> {
+        val artist = track.artists.firstOrNull()
+        val artistSlug = track.extras["artist_slug"]
+            ?: (if (artist != null) api.resolveOfficialArtistSlug(artist) else "")
+        val songSlug = track.extras["url_slug"]
+
+        if (artistSlug.isBlank()) return Feed(emptyList()) { emptyList<Shelf>().toFeedData() }
+
+        val feedData = api.getTrackFeedData(artistSlug, songSlug, track.id)
+        val shelves = mutableListOf<Shelf>()
+        val artistName = artist?.name ?: "Artist"
+
+        if (feedData.moreFromArtist.isNotEmpty()) {
+            val moreSongsFeed = Feed<Shelf>(emptyList()) { _ ->
+                val pagedData = PagedData.Continuous<Shelf> { continuation ->
+                    val pageNum = continuation?.toIntOrNull() ?: 1
+                    val pageSongs = api.getArtistUploads(artistSlug, page = pageNum, limit = 50)
+                    val nextCont = if (pageSongs.size >= 50) (pageNum + 1).toString() else null
+                    Page(
+                        pageSongs.map { Shelf.Item(it) },
+                        nextCont
+                    )
+                }
+                pagedData.toFeedData(
+                    buttons = Feed.Buttons(
+                        showSearch = true,
+                        showSort = false,
+                        showPlayAndShuffle = true
+                    )
+                )
+            }
+
+            shelves.add(
+                Shelf.Lists.Tracks(
+                    id = "track_more_from_artist",
+                    title = "More from $artistName",
+                    list = feedData.moreFromArtist,
+                    type = Shelf.Lists.Type.Linear,
+                    more = moreSongsFeed
+                )
+            )
+        }
+
+        if (feedData.playlistsFeaturing.isNotEmpty()) {
+            val morePlaylistsFeed = Feed<Shelf>(emptyList()) { _ ->
+                feedData.playlistsFeaturing.map { Shelf.Item(it) }.toFeedData()
+            }
+
+            shelves.add(
+                Shelf.Lists.Items(
+                    id = "track_playlists_featuring",
+                    title = "Playlists featuring artist",
+                    list = feedData.playlistsFeaturing,
+                    type = Shelf.Lists.Type.Linear,
+                    more = morePlaylistsFeed
+                )
+            )
+        }
+
+        return Feed(emptyList()) { shelves.toFeedData() }
     }
 
     override suspend fun quickSearch(query: String): List<QuickSearchItem> {
